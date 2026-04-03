@@ -1,0 +1,31 @@
+name: immich-autoindex
+
+services:
+  sync:
+    image: ${DOCKER_IMAGE:-immich-autoindex-sync:latest}
+    build:
+      context: ..
+      dockerfile: immich-autoindex/Dockerfile
+    environment:
+      - IMMICH_API_URL=${IMMICH_API_URL}
+      - IMMICH_API_KEY=${IMMICH_API_KEY}
+      - YEARS_BACK=${YEARS_BACK:-5}
+      - DITHER=true
+      - DITHER_FORMAT=spectra6
+      - IMAGE_DIR=/data/images
+    volumes:
+      - images:/data/images
+      - /etc/localtime:/etc/localtime:ro
+    restart: unless-stopped
+
+  nginx:
+    image: nginx:alpine
+    ports:
+      - "8098:80"
+    volumes:
+      - images:/data/images:ro
+      - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    restart: unless-stopped
+
+volumes:
+  images:
