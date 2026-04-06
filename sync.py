@@ -46,6 +46,14 @@ def apply_eink_effects(img: Image.Image, output_path: Path) -> None:
     palette.extend([0, 0, 0] * (256 - len(PALETTE_COLORS)))
     pal_image.putpalette(palette)
     
+    # Apply enhancements matching ConvertTo6ColorsForEInkSpectra6.py defaults
+    img = ImageEnhance.Brightness(img).enhance(1.1)
+    img = ImageEnhance.Contrast(img).enhance(1.2)
+    img = ImageEnhance.Color(img).enhance(1.2)
+    img = img.filter(ImageFilter.EDGE_ENHANCE)
+    img = img.filter(ImageFilter.SMOOTH)
+    img = img.filter(ImageFilter.SHARPEN)
+
     # Floyd-Steinberg dithering using Pillow's optimized implementation
     quantized_img = img.quantize(dither=Image.Dither.FLOYDSTEINBERG, palette=pal_image).convert('RGB')
     
