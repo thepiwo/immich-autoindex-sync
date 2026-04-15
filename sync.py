@@ -27,16 +27,40 @@ with unittest.mock.patch('sys.argv', ['sync.py', '--dir', 'portrait', 'dummy']),
      unittest.mock.patch('builtins.print'), \
      unittest.mock.patch('ConvertTo6ColorsForEInkSpectra6.tqdm'):
     try:
-        from ConvertTo6ColorsForEInkSpectra6 import quantize_atkinson, save_spectra6, PALETTE_COLORS
+        from ConvertTo6ColorsForEInkSpectra6 import PALETTE_COLORS
     except ImportError as e:
-        logging.error("Could not import quantize_atkinson from source repo at %s: %s", SOURCE_REPO_PATH, e)
+        logging.error("Could not import PALETTE_COLORS from source repo at %s: %s", SOURCE_REPO_PATH, e)
         sys.exit(1)
+
+# Bitplane order for .spectra6 output: Black, Yellow, Red, Blue, Green (White has no plane)
+_PLANE_COLORS = [PALETTE_COLORS[i] for i in (0, 2, 3, 4, 5)]
+
+
+def _save_spectra6_fast(quantized_p_img: Image.Image, output_path: Path) -> None:
+    """Vectorized .spectra6 writer. Operates on a P-mode image (palette indices)."""
+    width, height = quantized_p_img.size
+    if (width, height) != (TARGET_WIDTH, TARGET_HEIGHT):
+        quantized_p_img = quantized_p_img.resize((TARGET_WIDTH, TARGET_HEIGHT), Image.NEAREST)
+        width, height = TARGET_WIDTH, TARGET_HEIGHT
+
+    indices = np.frombuffer(quantized_p_img.tobytes(), dtype=np.uint8)
+    palette_rgb = np.array(quantized_p_img.getpalette(), dtype=np.uint8).reshape(-1, 3)
+
+    with open(output_path, 'wb') as f:
+        f.write(b'SPECTRA6')
+        f.write(width.to_bytes(4, 'little'))
+        f.write(height.to_bytes(4, 'little'))
+        for target in _PLANE_COLORS:
+            matching = np.where(np.all(palette_rgb == np.array(target, dtype=np.uint8), axis=1))[0].astype(np.uint8)
+            mask = np.isin(indices, matching)
+            f.write(np.packbits(mask).tobytes())
+
 
 def apply_eink_effects(img: Image.Image, output_path: Path) -> None:
     """Apply 180-degree rotation and Floyd-Steinberg dithering for E-Ink Spectra 6."""
     # Rotate 180 degrees before dithering as requested
     img = img.rotate(180)
-    
+
     # Create the 6-color palette object from the source repo colors
     pal_image = Image.new("P", (1, 1))
     # Flatten PALETTE_COLORS and pad to 256 colors (768 values)
@@ -45,7 +69,7 @@ def apply_eink_effects(img: Image.Image, output_path: Path) -> None:
         palette.extend((r, g, b))
     palette.extend([0, 0, 0] * (256 - len(PALETTE_COLORS)))
     pal_image.putpalette(palette)
-    
+
     # Apply enhancements matching ConvertTo6ColorsForEInkSpectra6.py defaults
     img = ImageEnhance.Brightness(img).enhance(1.1)
     img = ImageEnhance.Contrast(img).enhance(1.2)
@@ -54,10 +78,10 @@ def apply_eink_effects(img: Image.Image, output_path: Path) -> None:
     img = img.filter(ImageFilter.SMOOTH)
     img = img.filter(ImageFilter.SHARPEN)
 
-    # Floyd-Steinberg dithering using Pillow's optimized implementation
-    quantized_img = img.quantize(dither=Image.Dither.FLOYDSTEINBERG, palette=pal_image).convert('RGB')
-    
-    save_spectra6(quantized_img, str(output_path))
+    # Floyd-Steinberg dithering (Pillow's C implementation). Keep as P-mode for fast bitplane extraction.
+    quantized_img = img.quantize(dither=Image.Dither.FLOYDSTEINBERG, palette=pal_image)
+
+    _save_spectra6_fast(quantized_img, output_path)
 
 logging.basicConfig(
     level=logging.INFO,
